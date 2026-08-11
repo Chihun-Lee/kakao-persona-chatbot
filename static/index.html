@@ -2,13 +2,14 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>kakao persona chatbot</title>
 <style>
   :root { --kakao-bg:#b2c7da; --bubble-me:#fef01b; --bubble-bot:#ffffff; }
   * { box-sizing:border-box; margin:0; }
-  body { font-family:"Apple SD Gothic Neo","Noto Sans KR",sans-serif; background:#9bb2c9; height:100vh; display:flex; justify-content:center; }
-  #app { width:100%; max-width:480px; height:100vh; display:flex; flex-direction:column; background:var(--kakao-bg); }
+  html, body { height:100%; }
+  body { font-family:"Apple SD Gothic Neo","Noto Sans KR",sans-serif; background:#9bb2c9; height:100vh; height:100dvh; display:flex; justify-content:center; overflow:hidden; }
+  #app { width:100%; max-width:480px; height:100%; display:flex; flex-direction:column; background:var(--kakao-bg); }
   header { background:#a9c0d5; padding:10px 14px; display:flex; align-items:center; gap:10px; border-bottom:1px solid #93aabf; }
   header .title { font-weight:700; font-size:15px; flex:1; }
   header .sub { font-size:11px; color:#4a5a68; }
@@ -27,11 +28,21 @@
   .typing { color:#75858f; font-size:12px; margin:4px 0 4px 46px; }
   .memo { background:#eef4f9; border:1px solid #c8d6e2; border-radius:10px; font-size:11px; color:#3d4e5c; padding:8px 10px; margin:8px 4px; }
   .memo b { display:block; margin-bottom:3px; }
-  footer { display:flex; gap:8px; padding:10px; background:#eef2f5; border-top:1px solid #d4dde4; }
-  footer input { flex:1; border:1px solid #cfd9e1; border-radius:18px; padding:10px 14px; font-size:14px; outline:none; }
-  footer button { border:none; background:#fef01b; border-radius:18px; padding:0 18px; font-weight:700; font-size:13px; cursor:pointer; }
+  footer { display:flex; gap:8px; padding:10px; padding-bottom:calc(10px + env(safe-area-inset-bottom)); background:#eef2f5; border-top:1px solid #d4dde4; flex:none; }
+  footer input { flex:1; min-width:0; border:1px solid #cfd9e1; border-radius:18px; padding:10px 14px; font-size:16px; outline:none; }
+  footer button { border:none; background:#fef01b; border-radius:18px; padding:0 18px; font-weight:700; font-size:13px; cursor:pointer; flex:none; }
   footer button:disabled { opacity:.5; }
   #autoBtn.on { background:#3d3d3d; color:#fef01b; }
+  /* 좁은 화면(폰) 최적화 — 헤더·글자 축소로 대화 영역 확보 */
+  @media (max-width: 430px) {
+    header { padding:6px 8px; gap:6px; }
+    header .title { font-size:14px; }
+    header .sub { display:none; }
+    .avatar { width:30px; height:30px; font-size:15px; border-radius:11px; }
+    .bubble { max-width:76%; font-size:13.5px; }
+    select, button.hbtn { font-size:11px; padding:3px 5px; }
+    #chat { padding:8px 6px 14px; }
+  }
 </style>
 </head>
 <body>
@@ -53,7 +64,7 @@
   </footer>
 </div>
 <script>
-let personas = [], me = null, bot = null, history = [], busy = false, showMem = true, autoMode = false;
+let personas = [], me = null, bot = null, history = [], busy = false, showMem = false, autoMode = false;
 const $ = id => document.getElementById(id);
 
 async function init() {
