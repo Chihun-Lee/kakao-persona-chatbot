@@ -1,0 +1,15 @@
+# ⚠️ 개인 대화 데이터 — 절대 커밋 금지
+data/
+build/
+config.json
+*.csv
+*.txt
+!sample_data/*.csv
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# macOS
+.DS_Store
