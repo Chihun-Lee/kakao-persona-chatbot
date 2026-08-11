@@ -9,8 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from .engine import PersonaEngine
@@ -38,6 +38,25 @@ def _startup():
     global engine
     engine = PersonaEngine(ROOT / config.get("build_dir", "build"), make_provider(config),
                            fewshot_k=config.get("fewshot_k", 30))
+
+
+@app.middleware("http")
+async def access_guard(request: Request, call_next):
+    """config에 access_key가 있으면 ?key= 또는 쿠키로만 접근 허용.
+
+    터널/외부 공개 시 개인 대화가 노출되지 않도록 하는 최소한의 잠금장치.
+    공유 링크: https://<주소>/?key=<access_key>  (첫 접속 시 쿠키로 저장됨)
+    """
+    key = config.get("access_key")
+    if not key:
+        return await call_next(request)
+    if request.query_params.get("key") == key:
+        resp = await call_next(request)
+        resp.set_cookie("kpc_key", key, httponly=True, max_age=7 * 86400)
+        return resp
+    if request.cookies.get("kpc_key") == key:
+        return await call_next(request)
+    return PlainTextResponse("🔒 접근 키가 필요합니다. 공유받은 링크(?key=...)로 접속하세요.", status_code=401)
 
 
 class ChatRequest(BaseModel):

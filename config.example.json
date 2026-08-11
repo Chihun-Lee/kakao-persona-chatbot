@@ -5,6 +5,8 @@
   "build_dir": "build",
   "port": 8917,
   "fewshot_k": 30,
+  "_access_key_설명": "외부 공개(터널 등) 시 잠금. 설정하면 ?key=값 링크로만 접속 가능",
+  "access_key": "",
 
   "_provider_examples": {
     "claude-cli": { "provider": "claude-cli", "model": "sonnet" },
