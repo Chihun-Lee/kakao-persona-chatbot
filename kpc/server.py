@@ -7,6 +7,7 @@ config.json 에서 프로바이더/모델을 읽는다 (없으면 claude-cli 기
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -17,7 +18,8 @@ from .engine import PersonaEngine
 from .llm import LLMError, make_provider
 
 ROOT = Path(__file__).resolve().parent.parent
-CONFIG_PATH = ROOT / "config.json"
+# KPC_CONFIG 환경변수로 인스턴스별 설정 지정 가능 (여러 대화방을 각자 포트로 서빙)
+CONFIG_PATH = Path(os.environ.get("KPC_CONFIG", ROOT / "config.json"))
 
 
 def load_config() -> dict:

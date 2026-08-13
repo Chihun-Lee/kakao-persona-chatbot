@@ -1,9 +1,12 @@
 # ⚠️ 개인 대화 데이터 — 절대 커밋 금지
 data/
 build/
+build_*/
 config.json
+config_*.json
 *.csv
 *.txt
+*.log
 !sample_data/*.csv
 
 # Python
