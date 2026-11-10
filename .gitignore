@@ -4,6 +4,7 @@ build/
 build_*/
 config.json
 config_*.json
+personas/private/
 *.csv
 *.txt
 *.log

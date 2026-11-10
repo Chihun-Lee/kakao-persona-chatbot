@@ -1,93 +1,125 @@
 # -*- coding: utf-8 -*-
-"""화자별 페르소나(문체 프로파일 + few-shot 예시 뱅크) 추출.
-
-방법론: 대량 few-shot 프롬프팅 (Edward Donner의 개인 채팅 클론,
-WhatsApp-Llama 등에서 검증된 접근의 프롬프트 기반 변형).
-통계적 문체 프로파일 + 실제 (맥락 → 응답) 예시를 함께 저장한다.
-"""
+"""본인이 쓴 글에서 말투 통계, 실제 오타, 가린 예문을 뽑아 페르소나 파일을 만든다."""
 from __future__ import annotations
 
 import json
 import random
 import re
-from collections import Counter
+import statistics
+from collections import Counter, defaultdict
 from pathlib import Path
 
-from .parser import Episode, Turn
+from .imperfect import SPACE_SLIPS
+from .jamo import plausible_slip, to_keys
+from .mask import mask, usable_example
 
-_LAUGH = re.compile(r"ㅋ+")
-_CRY = re.compile(r"[ㅠㅜ]+")
-_VOWEL_ECHO = re.compile(r"[가-힣][ㅏㅑㅓㅕㅗㅛㅜㅠㅡㅣㅐㅔ]\b")  # "그런가ㅏ" 식 모음 반복
+_END = re.compile(r"([가-힣]{1,3})[.!?~ㅋㅎㅠㅜ\s]*$")
+_WORD = re.compile(r"[가-힣]{2,8}")
+_QUOTE = re.compile(r"^(?:-{2,}.*(?:Original|원본|전달).*|>.*|보낸 ?사람\s*:.*|From\s*:.*|On .* wrote:.*)$", re.M)
 
 
-def build_profile(name: str, turns: list[Turn]) -> dict:
-    msgs = [t for turn in turns if turn.speaker == name for t in turn.texts]
-    own_turns = [turn for turn in turns if turn.speaker == name]
-    n = max(len(msgs), 1)
+def clean_mail(text: str) -> str:
+    """답장 아래 붙은 이전 메일과 웹메일이 끼워 넣은 코드 줄을 잘라 낸다."""
+    m = _QUOTE.search(text)
+    body = text[:m.start()] if m else text
+    return "\n".join(ln for ln in body.splitlines() if not re.match(r"\s*(?:var |function |<)", ln)).strip()
 
-    endings = Counter(m.strip()[-2:] for m in msgs if len(m.strip()) >= 2)
-    words = Counter(w for m in msgs for w in re.findall(r"[가-힣a-zA-Z]{2,}", m))
 
+def chat_stats(messages: list[str]) -> dict:
+    n = max(len(messages), 1)
+    lengths = [len(m) for m in messages] or [0]
+    endings = Counter(m.group(1)[-2:] for m in (_END.search(x) for x in messages) if m)
+    openers = Counter(x.split()[0] for x in messages if x.split())
+    rate = lambda f: round(sum(1 for x in messages if f(x)) / n, 4)
     return {
-        "name": name,
-        "message_count": len(msgs),
-        "avg_msg_len": round(sum(len(m) for m in msgs) / n, 1),
-        "avg_msgs_per_turn": round(len(msgs) / max(len(own_turns), 1), 2),
-        "laugh_rate": round(sum(1 for m in msgs if _LAUGH.search(m)) / n, 3),
-        "cry_rate": round(sum(1 for m in msgs if _CRY.search(m)) / n, 3),
-        "question_rate": round(sum(1 for m in msgs if "?" in m) / n, 3),
-        "exclaim_rate": round(sum(1 for m in msgs if "!" in m) / n, 3),
-        "tilde_rate": round(sum(1 for m in msgs if "~" in m) / n, 3),
-        "comma_pause_rate": round(sum(1 for m in msgs if ",," in m) / n, 3),
-        "vowel_echo_rate": round(sum(1 for m in msgs if _VOWEL_ECHO.search(m)) / n, 3),
-        "top_endings": [{"ending": e, "count": c} for e, c in endings.most_common(15)],
-        "top_words": [{"word": w, "count": c} for w, c in words.most_common(30)],
-        "notes": "",  # 사용자가 직접 보강 가능한 자유 서술
+        "messages": len(messages),
+        "median_chars": int(statistics.median(lengths)),
+        "ends_with_period": rate(lambda x: x.rstrip().endswith(".")),
+        "has_question": rate(lambda x: "?" in x),
+        "has_exclaim": rate(lambda x: "!" in x),
+        "has_tilde": rate(lambda x: "~" in x),
+        "has_laugh": rate(lambda x: "ㅋ" in x or "ㅎㅎ" in x),
+        "has_cry": rate(lambda x: "ㅠ" in x or "ㅜ" in x),
+        "top_endings": [e for e, _ in endings.most_common(20)],
+        "top_openers": [o for o, _ in openers.most_common(20)],
     }
 
 
-def extract_exchanges(episodes: list[Episode], responder: str,
-                      max_context_turns: int = 3) -> list[dict]:
-    """(직전 맥락 → responder의 응답 턴) 쌍을 전부 추출."""
-    exchanges = []
-    for ep in episodes:
-        for i, turn in enumerate(ep.turns):
-            if turn.speaker != responder or i == 0:
-                continue
-            ctx = ep.turns[max(0, i - max_context_turns):i]
-            if not any(c.speaker != responder for c in ctx):
-                continue
-            exchanges.append({
-                "time": turn.start.isoformat(),
-                "context": [{"speaker": c.speaker, "texts": c.texts} for c in ctx],
-                "response": turn.texts,
-            })
-    return exchanges
+def mail_stats(mails: list[str], name_full: str, name_given: str) -> dict:
+    lines_all = [[ln.strip() for ln in m.splitlines() if ln.strip()] for m in mails]
+    lines_all = [x for x in lines_all if x]
+    n = max(len(lines_all), 1)
+    ends = [m.group(1) for ms in mails for m in re.finditer(r"(?:습니다|합니다|입니다|드립니다|겠습니다)(\.?)(?=\s|$)", ms)]
+    first = Counter(ls[0] for ls in lines_all if len(ls[0]) <= 40 and not ls[0].startswith(("[", "var ")))
+    pattern = re.compile(rf"(?:{re.escape(name_full)}|{re.escape(name_given)})\s*(?:드림|올림|듦|드맇|배상)")
+    signs = Counter()
+    for m in mails:
+        hits = pattern.findall(m[-160:])
+        if hits:
+            signs[hits[-1]] += 1
+    total = max(sum(signs.values()), 1)
+    return {
+        "mails": len(lines_all),
+        "median_chars": int(statistics.median([sum(len(x) for x in ls) for ls in lines_all])) if lines_all else 0,
+        "line_ends_with_period": round(sum(1 for x in ends if x) / max(len(ends), 1), 4),
+        "top_greetings": [g for g, _ in first.most_common(10)],
+        "signoffs": [{"text": t, "weight": round(c / total, 4), "count": c} for t, c in signs.most_common(6)],
+    }
 
 
-def select_fewshot(exchanges: list[dict], k: int = 150, seed: int = 42) -> list[dict]:
-    """품질 필터 후 시기별로 고르게 섞은 few-shot 뱅크를 만든다."""
-    def quality(ex: dict) -> bool:
-        resp = " ".join(ex["response"])
-        if len(resp) < 4:  # "ㅇㅇ" 단답만 있는 쌍 배제 (루프 방지)
-            return False
-        ctx_len = sum(len(t) for c in ex["context"] for t in c["texts"])
-        return ctx_len >= 4
+def mine_typos(texts: list[str], min_common: int = 30, max_rare: int = 3, ratio: int = 40, top: int = 80) -> tuple[list[dict], float]:
+    """드물게 나온 낱말이 흔한 낱말과 키 한 번 차이면 오타로 본다."""
+    counts = Counter(w for t in texts for w in _WORD.findall(t))
+    common = {w: c for w, c in counts.items() if c >= min_common}
+    index: dict[str, list[str]] = defaultdict(list)
 
-    good = [e for e in exchanges if quality(e)]
-    rng = random.Random(seed)
-    if len(good) <= k:
-        return good
-    # 시간순 정렬 후 균등 구간에서 하나씩 뽑아 시기 편향 방지
-    good.sort(key=lambda e: e["time"])
-    step = len(good) / k
-    return [good[min(int(i * step + rng.random() * step), len(good) - 1)] for i in range(k)]
+    def deletes(word: str):
+        keys = to_keys(word)
+        yield "".join(keys)
+        for i in range(len(keys)):
+            yield "".join(keys[:i] + keys[i + 1:])
+
+    for word in common:
+        for d in deletes(word):
+            index[d].append(word)
+    pairs = []
+    typo_total = 0
+    for rare, c in counts.items():
+        if c > max_rare or rare in common:
+            continue
+        options = {w for d in deletes(rare) for w in index.get(d, [])}
+        best = max((w for w in options if plausible_slip(w, rare)), key=lambda w: common[w], default=None)
+        if best and common[best] >= c * ratio and len(best) >= 3:
+            pairs.append({"right": best, "wrong": rare, "count": c, "right_count": common[best]})
+            typo_total += c
+    pairs.sort(key=lambda p: (-p["right_count"], -p["count"]))
+    chars = max(sum(len(t) for t in texts), 1)
+    return pairs[:top], round(typo_total / chars * 1000, 3)
 
 
-def save_persona(out_dir: str | Path, profile: dict, fewshot: list[dict]) -> Path:
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{profile['name']}.json"
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump({"profile": profile, "fewshot": fewshot}, f, ensure_ascii=False, indent=1)
+def spacing_rate(texts: list[str]) -> float:
+    """공백 없이 붙여 쓴 자리를 천 글자당으로 잰다."""
+    chars = max(sum(len(t) for t in texts), 1)
+    joined = 0
+    for rule in SPACE_SLIPS:
+        glued = re.compile(rule.replace(" (?=", "(?="))
+        joined += sum(len(glued.findall(t)) for t in texts)
+    return round(joined / chars * 1000, 3)
+
+
+def pick_examples(texts: list[str], k: int, lo: int, hi: int, names: list[str], seed: int = 42) -> list[str]:
+    masked = (mask(t, names) for t in texts if lo <= len(t) <= hi)
+    good = sorted({t.strip() for t in masked if usable_example(t)})
+    random.Random(seed).shuffle(good)
+    return good[:k]
+
+
+def period_drop(rate_with_period: float) -> float:
+    return round(min(0.95, max(0.02, 1 - rate_with_period)), 3)
+
+
+def save(persona: dict, path: str | Path) -> Path:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(persona, ensure_ascii=False, indent=1), encoding="utf-8")
     return path

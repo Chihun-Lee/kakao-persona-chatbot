@@ -1,0 +1,13 @@
+{
+  "provider": "anthropic",
+  "model": "claude-opus-5-5",
+  "effort": "low",
+  "max_tokens": 2048,
+  "host": "0.0.0.0",
+  "port": 8917,
+  "public_mode": true,
+  "rate_per_hour": 20,
+  "daily_cap": 500,
+  "max_chars": 1500,
+  "access_key": ""
+}

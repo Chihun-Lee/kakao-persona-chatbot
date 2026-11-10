@@ -1,87 +1,74 @@
-# 🗨️ kakao persona chatbot
+# 페르소나 말투 변환
 
-카카오톡 대화 내보내기 파일로 **두 사람의 페르소나와 문체를 학습**해서, 웹에서 어느 쪽 역할로든 1:1 대화를 나눠볼 수 있는 챗봇입니다. 과거 대화를 검색하는 **가상 메모리(RAG)** 가 내장되어 있어, 봇이 "그때 그 얘기"를 기억한 것처럼 대답합니다.
+전하고 싶은 말을 적으면 고른 사람의 말투로 바꿔 주는 웹 도구입니다. 카카오톡 내보내기와 보낸 메일에서 페르소나를 만들고, API로 변환합니다. 띄어쓰기를 붙이거나 마침표를 빼는 정도의 작은 실수도 넣을 수 있습니다.
 
-> ⚠️ **개인 대화 데이터는 이 저장소에 포함되지 않으며, 절대 커밋되지 않습니다.**
-> `data/`, `build/`, `*.csv` 는 `.gitignore` 로 차단됩니다. 코드만 공개됩니다.
+이전의 페르소나 챗봇 코드는 지웠습니다. 필요하면 태그 `v0.1-chatbot`에서 볼 수 있습니다.
 
-## 방법론
+## 하는 일
 
-개인 채팅 클론 분야에서 검증된 접근을 조합했습니다.
+1. 페르소나를 고릅니다. 공개 예시는 가상 인물 `한도윤`입니다.
+2. 메일, 업무 카톡, 친구 카톡 중 어디에 쓸 글인지 고릅니다.
+3. 전할 말을 적으면 그 사람의 말투로 바뀝니다.
+4. 실수 정도(없음, 아주 가끔, 가끔, 자주)에 따라 흐트러짐이 들어가고, 바뀐 곳이 표시됩니다.
 
-| 구성요소 | 방법 | 참고 |
+## 실수가 들어가는 방식
+
+| 종류 | 예 | 기준 |
 |---|---|---|
-| 문체 학습 | 통계적 문체 프로파일(어미·ㅋㅋ율·메시지 분절 습관) + 실제 대화 **대량 few-shot 프롬프팅** | [Edward Donner — fine-tuning an LLM on 240k text messages](https://edwarddonner.com/2024/01/02/fine-tuning-an-llm-on-240k-text-messages/), [WhatsApp-Llama](https://github.com/Ads97/WhatsApp-Llama) |
-| 가상 메모리 | 대화를 에피소드로 분할 → **BM25 검색**(한국어 어절+바이그램) + 일자별 키워드 타임라인 | RAG 기반 에피소드 메모리 |
-| 검증(권장) | 지인 블라인드 튜링 테스트, Burrows' Delta 스타일로메트리 | [ECHO (arXiv 2404.13957)](https://arxiv.org/abs/2404.13957), [faststylometry](https://github.com/fastdatascience/faststylometry) |
-| 파인튜닝(선택) | few-shot 뱅크를 MLX LoRA용 JSONL로 내보내기 | `scripts/export_finetune.py` |
+| 오타 | 부탁드립니다 → 부탇드립니다 | 그 사람이 실제로 냈던 오타를 먼저, 다음으로 두벌식 자판 실수 |
+| 붙여 쓰기 | 할 수 있습니다 → 할수 있습니다 | 그 사람 글에서 잰 빈도 |
+| 마침표 | 있었다가 없었다가 | 채널별로 잰 비율 |
+| 맺음말 | 한도윤 드림 → 도윤듦 (아주 드물게) | 페르소나에 적은 변형 |
 
-## 빠른 시작
+숫자, 날짜, 금액, 영문, 메일 주소, 호칭이 붙은 이름은 바꾸지 않습니다. 원문의 숫자가 결과에서 사라지면 경고가 나옵니다. 욕처럼 보이는 오타는 만들지 않습니다.
+
+사람이 쓴 글처럼 보이게 하지만, 구별되지 않는다고 보장하지는 않습니다. 보내기 전에 직접 읽어 보세요.
+
+## 실행
 
 ```bash
-# 0. 의존성
 pip install -r requirements.txt
-
-# 1. 카카오톡 대화 내보내기
-#    모바일: 채팅방 → 설정 → 대화 내용 내보내기 (CSV/텍스트)
-#    → data/ 폴더에 저장 (gitignore됨)
-
-# 2. 페르소나 + 메모리 빌드 (샘플로 먼저 체험 가능)
-python scripts/build.py sample_data/sample_chat.csv
-python scripts/build.py data/KakaoTalk_Chat_xxx.csv   # 실제 데이터
-
-# 3. 서버 실행 → http://127.0.0.1:8917
-python -m kpc.server
+export ANTHROPIC_API_KEY=...      # 또는 ant auth login
+cp config.example.json config.json
+python -m kpc.server              # http://127.0.0.1:8917
 ```
 
-## LLM 백엔드 (3종 중 택1 — `config.json`)
+키 없이 내 컴퓨터에서만 시험하려면 `config.json`의 `provider`를 `claude-cli`로 바꿉니다. Claude Code 로그인이 필요합니다.
 
-`config.example.json` 을 `config.json` 으로 복사 후 수정합니다.
-
-| provider | 필요한 것 | 비고 |
-|---|---|---|
-| `claude-cli` (기본) | [Claude Code](https://claude.com/claude-code) 설치+로그인 | **API 키 불필요**, 구독 인증 사용 |
-| `anthropic` | `pip install anthropic` + `ANTHROPIC_API_KEY` | 기본 모델 `claude-opus-5`, 프롬프트 캐싱 및 안전거절 서버측 폴백 적용 |
-| `openai-compat` | Ollama / LM Studio / `mlx_lm.server` | 완전 로컬·오프라인 |
-
-## 웹 UI 기능
-
-- **역할 전환** — 내가 A가 되어 B 봇과 대화하거나, 반대로 B가 되어 A 봇과 대화
-- **자동 대화** — 두 페르소나 봇이 서로 1:1로 대화하는 셀프플레이 모드
-- **🧠 기억 표시** — 봇이 이번 답장에서 떠올린 과거 실제 대화(에피소드)를 함께 표시
-- 카카오톡 스타일 말풍선, 실제처럼 짧은 메시지 여러 개로 분할 전송
-
-## 동작 원리
-
-```
-내보내기 CSV ─▶ parser ─▶ 턴 병합 ─▶ 에피소드 분할
-                              │            │
-                    persona (화자별)   memory (공용)
-                    · 문체 통계 프로파일   · BM25 에피소드 인덱스
-                    · few-shot 예시 뱅크   · 일자별 키워드 타임라인
-                              └─────┬──────┘
-                                 engine ─▶ 시스템프롬프트(프로파일+예시)
-                                          + [기억] 검색결과 + 현재 대화
-                                          ─▶ LLM ─▶ ["짧은", "메시지들"]
-```
-
-## 파인튜닝으로 확장 (선택)
-
-프롬프트 기반으로 부족하면 Apple Silicon에서 LoRA 파인튜닝:
+## 내 페르소나 만들기
 
 ```bash
-python scripts/export_finetune.py "화자이름"
-pip install mlx-lm
-mlx_lm.lora --model Qwen/Qwen2.5-7B-Instruct --train --data finetune/화자이름 --iters 600
-mlx_lm.server --model Qwen/Qwen2.5-7B-Instruct --adapter-path adapters   # openai-compat로 연결
+python scripts/build_persona.py --id me --name 홍길동 --me 길동 \
+  --kakao-work "data/work/*.csv" --kakao-friend "data/friend/*.csv" \
+  --mail-jsonl data/sent.jsonl --mail-field text \
+  --rare-signoff "길동듦" --out personas/private/me.json
 ```
 
-## 프라이버시
+- 본인이 보낸 글만 씁니다. 상대방이 쓴 글은 통계에도 예문에도 들어가지 않습니다.
+- 전화번호, 계좌, 메일 주소, 사람 이름을 가리고, 민감한 낱말이 있는 문장은 예문에서 뺍니다.
+- `personas/private/`는 Git에 올라가지 않습니다.
+- Claude Code를 쓴다면 `skill/voice-builder`를 스킬 폴더에 복사해 대화로 진행할 수 있습니다.
 
-- 원본 대화·빌드 산출물은 전부 로컬에만 존재합니다 (`.gitignore` 참조)
-- `claude-cli`/`anthropic` 프로바이더는 대화 맥락이 Anthropic API로 전송됩니다. 완전 오프라인을 원하면 `openai-compat` + 로컬 모델을 사용하세요
-- 타인의 대화 데이터를 사용할 때는 반드시 당사자 동의를 받으세요
+## 모두에게 공개하기
 
-## License
+공개 모드에서는 `public: true` 페르소나만 보이고, 시간당 횟수와 하루 총량을 제한하며, 입력한 글을 저장하지 않습니다. 비용은 키 주인에게 청구됩니다.
+
+```bash
+# 내 컴퓨터를 잠시 공개
+KPC_CONFIG=config.public.json python -m kpc.server
+cloudflared tunnel --url http://127.0.0.1:8917
+
+# 또는 서버에 배포
+docker build -t persona-voice .
+docker run -p 8917:8917 -e ANTHROPIC_API_KEY=... persona-voice
+```
+
+## 지켜 주세요
+
+- 본인의 말투, 허락받은 사람의 말투, 가상 인물만 쓰세요.
+- 다른 사람인 척 메시지를 보내거나 속여서 돈이나 정보를 얻는 데 쓰면 안 됩니다.
+- 본인 페르소나를 공개하면 누구나 그 말투로 글을 만들 수 있습니다. 공개 전에 한 번 더 생각해 주세요.
+
+## 라이선스
 
 MIT
