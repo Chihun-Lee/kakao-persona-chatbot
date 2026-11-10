@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import tempfile
 import urllib.request
 
 
@@ -18,7 +19,7 @@ class LLMError(RuntimeError):
 
 
 class AnthropicProvider:
-    def __init__(self, model: str = "claude-opus-5", effort: str = "low", max_tokens: int = 1024):
+    def __init__(self, model: str = "claude-opus-5-5", effort: str = "low", max_tokens: int = 2048):
         import anthropic  # 선택 의존성 — 이 프로바이더를 쓸 때만 필요
         self.client = anthropic.Anthropic()
         self.model = model
@@ -55,10 +56,13 @@ class ClaudeCLIProvider:
     def generate(self, system: str, prompt: str) -> str:
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
         try:
-            proc = subprocess.run(
-                ["claude", "-p", "--model", self.model, "--append-system-prompt", system],
-                input=prompt, capture_output=True, text=True, timeout=self.timeout, env=env,
-            )
+            # 개인 설정과 도구를 읽지 않도록 빈 폴더에서 설정 없이 실행한다
+            with tempfile.TemporaryDirectory() as empty:
+                proc = subprocess.run(
+                    ["claude", "-p", "--model", self.model, "--system-prompt", system, "--setting-sources", "project",
+                     "--strict-mcp-config", "--no-session-persistence", "--tools", ""],
+                    input=prompt, capture_output=True, text=True, timeout=self.timeout, env=env, cwd=empty,
+                )
         except FileNotFoundError as e:
             raise LLMError("claude CLI를 찾을 수 없습니다. https://claude.com/claude-code 설치 필요") from e
         except subprocess.TimeoutExpired as e:
@@ -97,9 +101,9 @@ class OpenAICompatProvider:
 def make_provider(config: dict):
     p = config.get("provider", "claude-cli")
     if p == "anthropic":
-        return AnthropicProvider(config.get("model", "claude-opus-5"),
+        return AnthropicProvider(config.get("model", "claude-opus-5-5"),
                                  config.get("effort", "low"),
-                                 config.get("max_tokens", 1024))
+                                 config.get("max_tokens", 2048))
     if p == "claude-cli":
         return ClaudeCLIProvider(config.get("model", "sonnet"))
     if p == "openai-compat":
